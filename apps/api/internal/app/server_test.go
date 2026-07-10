@@ -74,6 +74,140 @@ func TestSignupLoginCreateSurveyAndRespondFlow(t *testing.T) {
 	}
 }
 
+func TestDuplicateSlotSelectionsAreRejected(t *testing.T) {
+	server, err := NewServer(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+	ts := httptest.NewServer(server.Routes())
+	defer ts.Close()
+	client := &http.Client{}
+
+	signupResp := postJSON(t, client, ts.URL+"/api/auth/signup", map[string]string{"email": "dupe@example.com", "password": "good-password", "name": "Dupe"}, nil)
+	sessionCookie := firstCookie(signupResp, "scheduling_session")
+	slots := []TimeSlot{{Start: time.Date(2026, 7, 11, 14, 0, 0, 0, time.UTC), End: time.Date(2026, 7, 11, 15, 0, 0, 0, time.UTC)}}
+	surveyResp := postJSON(t, client, ts.URL+"/api/surveys", map[string]any{"title": "Dupe survey", "timezone": "UTC", "slots": slots}, sessionCookie)
+	var created Survey
+	decodeJSON(t, surveyResp, &created)
+
+	resp := postJSON(t, client, ts.URL+"/api/public/surveys/"+created.ShareToken+"/responses", map[string]any{
+		"respondent_name": "Dana", "slot_ids": []int64{created.Slots[0].ID, created.Slots[0].ID},
+	}, nil)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("duplicate response status = %d", resp.StatusCode)
+	}
+}
+
+func TestCORSOnlyAllowsConfiguredOrigins(t *testing.T) {
+	server, err := NewServer(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+	ts := httptest.NewServer(server.Routes())
+	defer ts.Close()
+
+	req, err := http.NewRequest(http.MethodGet, ts.URL+"/api/health", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Origin", "https://evil.example")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := resp.Header.Get("Access-Control-Allow-Origin"); got != "" {
+		t.Fatalf("unexpected CORS allow origin for denied site: %q", got)
+	}
+
+	req, err = http.NewRequest(http.MethodGet, ts.URL+"/api/health", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Origin", "http://localhost:5173")
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := resp.Header.Get("Access-Control-Allow-Origin"); got != "http://localhost:5173" {
+		t.Fatalf("expected localhost dev origin to be allowed, got %q", got)
+	}
+}
+
+func TestDuplicateCandidateSlotsAreRejected(t *testing.T) {
+	server, err := NewServer(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+	ts := httptest.NewServer(server.Routes())
+	defer ts.Close()
+	client := &http.Client{}
+
+	signupResp := postJSON(t, client, ts.URL+"/api/auth/signup", map[string]string{"email": "candidate@example.com", "password": "good-password", "name": "Candidate"}, nil)
+	sessionCookie := firstCookie(signupResp, "scheduling_session")
+	slot := TimeSlot{Start: time.Date(2026, 7, 11, 14, 0, 0, 0, time.UTC), End: time.Date(2026, 7, 11, 15, 0, 0, 0, time.UTC)}
+	resp := postJSON(t, client, ts.URL+"/api/surveys", map[string]any{"title": "Duplicate candidates", "timezone": "UTC", "slots": []TimeSlot{slot, slot}}, sessionCookie)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("duplicate candidate status = %d", resp.StatusCode)
+	}
+}
+
+func TestPublicSurveyDoesNotExposeCreatorID(t *testing.T) {
+	server, err := NewServer(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+	ts := httptest.NewServer(server.Routes())
+	defer ts.Close()
+	client := &http.Client{}
+
+	signupResp := postJSON(t, client, ts.URL+"/api/auth/signup", map[string]string{"email": "public@example.com", "password": "good-password", "name": "Public"}, nil)
+	sessionCookie := firstCookie(signupResp, "scheduling_session")
+	slots := []TimeSlot{{Start: time.Date(2026, 7, 11, 14, 0, 0, 0, time.UTC), End: time.Date(2026, 7, 11, 15, 0, 0, 0, time.UTC)}}
+	surveyResp := postJSON(t, client, ts.URL+"/api/surveys", map[string]any{"title": "Public survey", "timezone": "UTC", "slots": slots}, sessionCookie)
+	var created Survey
+	decodeJSON(t, surveyResp, &created)
+
+	resp, err := client.Get(ts.URL + "/api/public/surveys/" + created.ShareToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := payload["created_by"]; ok {
+		t.Fatalf("public survey leaked created_by: %+v", payload)
+	}
+}
+
+func TestTrailingJSONIsRejected(t *testing.T) {
+	server, err := NewServer(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+	ts := httptest.NewServer(server.Routes())
+	defer ts.Close()
+
+	req, err := http.NewRequest(http.MethodPost, ts.URL+"/api/auth/signup", bytes.NewBufferString(`{"email":"trail@example.com","password":"good-password","name":"Trail"}{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("trailing json status = %d", resp.StatusCode)
+	}
+}
+
 func TestLoginRejectsBadPassword(t *testing.T) {
 	server, err := NewServer(":memory:")
 	if err != nil {

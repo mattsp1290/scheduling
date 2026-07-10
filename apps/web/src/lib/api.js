@@ -10,7 +10,14 @@ export async function apiFetch(path, options = {}) {
 		}
 	});
 	const text = await response.text();
-	const body = text ? JSON.parse(text) : null;
+	let body = null;
+	if (text) {
+		try {
+			body = JSON.parse(text);
+		} catch {
+			body = { error: `Non-JSON response (${response.status}): ${text.slice(0, 120)}` };
+		}
+	}
 	if (!response.ok) {
 		throw new Error(body?.error || `Request failed with ${response.status}`);
 	}

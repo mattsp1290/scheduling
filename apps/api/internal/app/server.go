@@ -4,7 +4,9 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -16,7 +18,9 @@ import (
 const sessionCookieName = "scheduling_session"
 
 type Server struct {
-	db *sql.DB
+	db             *sql.DB
+	allowedOrigins map[string]bool
+	secureCookies  bool
 }
 
 type User struct {
@@ -42,6 +46,15 @@ type Survey struct {
 	Slots       []TimeSlot `json:"slots"`
 }
 
+type PublicSurvey struct {
+	ID          int64      `json:"id"`
+	Title       string     `json:"title"`
+	Description string     `json:"description"`
+	Timezone    string     `json:"timezone"`
+	ShareToken  string     `json:"share_token"`
+	Slots       []TimeSlot `json:"slots"`
+}
+
 type Response struct {
 	ID             int64   `json:"id"`
 	RespondentName string  `json:"respondent_name"`
@@ -61,7 +74,7 @@ func NewServer(dbPath string) (*Server, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	s := &Server{db: db}
+	s := &Server{db: db, allowedOrigins: loadAllowedOrigins(), secureCookies: os.Getenv("COOKIE_SECURE") == "true"}
 	if err := s.migrate(); err != nil {
 		db.Close()
 		return nil, err
@@ -92,7 +105,13 @@ CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, user_id INTEGER NOT
 CREATE TABLE IF NOT EXISTS surveys (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, description TEXT NOT NULL, timezone TEXT NOT NULL, share_token TEXT NOT NULL UNIQUE, created_by INTEGER NOT NULL REFERENCES users(id), created_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS survey_slots (id INTEGER PRIMARY KEY AUTOINCREMENT, survey_id INTEGER NOT NULL REFERENCES surveys(id) ON DELETE CASCADE, starts_at TEXT NOT NULL, ends_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS responses (id INTEGER PRIMARY KEY AUTOINCREMENT, survey_id INTEGER NOT NULL REFERENCES surveys(id) ON DELETE CASCADE, respondent_name TEXT NOT NULL, created_at TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS response_slots (response_id INTEGER NOT NULL REFERENCES responses(id) ON DELETE CASCADE, slot_id INTEGER NOT NULL REFERENCES survey_slots(id) ON DELETE CASCADE, PRIMARY KEY(response_id, slot_id));`)
+CREATE TABLE IF NOT EXISTS response_slots (response_id INTEGER NOT NULL REFERENCES responses(id) ON DELETE CASCADE, slot_id INTEGER NOT NULL REFERENCES survey_slots(id) ON DELETE CASCADE, PRIMARY KEY(response_id, slot_id));
+CREATE INDEX IF NOT EXISTS idx_surveys_created_by ON surveys(created_by);
+CREATE INDEX IF NOT EXISTS idx_survey_slots_survey_id ON survey_slots(survey_id);
+CREATE INDEX IF NOT EXISTS idx_responses_survey_id ON responses(survey_id);
+CREATE INDEX IF NOT EXISTS idx_response_slots_slot_id ON response_slots(slot_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);`)
 	return err
 }
 
@@ -101,6 +120,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req struct{ Email, Password, Name string }
 	if !decode(w, r, &req) {
 		return
@@ -128,6 +148,7 @@ func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req struct{ Email, Password string }
 	if !decode(w, r, &req) {
 		return
@@ -147,7 +168,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	if cookie, err := r.Cookie(sessionCookieName); err == nil {
 		_, _ = s.db.Exec(`DELETE FROM sessions WHERE token=?`, cookie.Value)
 	}
-	http.SetCookie(w, &http.Cookie{Name: sessionCookieName, Value: "", Path: "/", MaxAge: -1, SameSite: http.SameSiteLaxMode})
+	http.SetCookie(w, &http.Cookie{Name: sessionCookieName, Value: "", Path: "/", MaxAge: -1, HttpOnly: true, Secure: s.secureCookies, SameSite: http.SameSiteLaxMode})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
@@ -175,6 +196,7 @@ func (s *Server) handleSurveys(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) createSurvey(w http.ResponseWriter, r *http.Request, userID int64) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req struct {
 		Title, Description, Timezone string
 		Slots                        []TimeSlot
@@ -183,9 +205,14 @@ func (s *Server) createSurvey(w http.ResponseWriter, r *http.Request, userID int
 		return
 	}
 	req.Title = strings.TrimSpace(req.Title)
+	req.Description = strings.TrimSpace(req.Description)
 	req.Timezone = strings.TrimSpace(req.Timezone)
 	if req.Title == "" || req.Timezone == "" || len(req.Slots) == 0 {
 		writeError(w, http.StatusBadRequest, "title, timezone, and at least one slot are required")
+		return
+	}
+	if len(req.Title) > 200 || len(req.Description) > 2000 || len(req.Slots) > 200 {
+		writeError(w, http.StatusBadRequest, "survey exceeds maximum title, description, or slot count")
 		return
 	}
 	token := uuid.NewString()
@@ -202,11 +229,18 @@ func (s *Server) createSurvey(w http.ResponseWriter, r *http.Request, userID int
 	}
 	surveyID, _ := res.LastInsertId()
 	slots := make([]TimeSlot, 0, len(req.Slots))
+	seenSlots := map[string]bool{}
 	for _, slot := range req.Slots {
 		if !slot.End.After(slot.Start) {
 			writeError(w, http.StatusBadRequest, "slot end must be after start")
 			return
 		}
+		slotKey := slot.Start.UTC().Format(time.RFC3339Nano) + "/" + slot.End.UTC().Format(time.RFC3339Nano)
+		if seenSlots[slotKey] {
+			writeError(w, http.StatusBadRequest, "duplicate candidate slot")
+			return
+		}
+		seenSlots[slotKey] = true
 		res, err := tx.Exec(`INSERT INTO survey_slots(survey_id,starts_at,ends_at) VALUES(?,?,?)`, surveyID, slot.Start.UTC().Format(time.RFC3339Nano), slot.End.UTC().Format(time.RFC3339Nano))
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "could not create slot")
@@ -233,10 +267,21 @@ func (s *Server) listSurveys(w http.ResponseWriter, userID int64) {
 	var surveys []Survey
 	for rows.Next() {
 		var survey Survey
-		if err := rows.Scan(&survey.ID, &survey.Title, &survey.Description, &survey.Timezone, &survey.ShareToken, &survey.CreatedBy); err == nil {
-			survey.Slots, _ = s.loadSlots(survey.ID)
-			surveys = append(surveys, survey)
+		if err := rows.Scan(&survey.ID, &survey.Title, &survey.Description, &survey.Timezone, &survey.ShareToken, &survey.CreatedBy); err != nil {
+			writeError(w, http.StatusInternalServerError, "could not load survey")
+			return
 		}
+		slots, err := s.loadSlots(survey.ID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "could not load survey slots")
+			return
+		}
+		survey.Slots = slots
+		surveys = append(surveys, survey)
+	}
+	if err := rows.Err(); err != nil {
+		writeError(w, http.StatusInternalServerError, "could not list surveys")
+		return
 	}
 	writeJSON(w, http.StatusOK, surveys)
 }
@@ -273,10 +318,11 @@ func (s *Server) getPublicSurvey(w http.ResponseWriter, token string) {
 		writeError(w, http.StatusNotFound, "survey not found")
 		return
 	}
-	writeJSON(w, http.StatusOK, survey)
+	writeJSON(w, http.StatusOK, publicSurvey(survey))
 }
 
 func (s *Server) createResponse(w http.ResponseWriter, r *http.Request, token string) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	survey, err := s.loadSurveyByToken(token)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "survey not found")
@@ -298,11 +344,21 @@ func (s *Server) createResponse(w http.ResponseWriter, r *http.Request, token st
 		writeError(w, http.StatusBadRequest, "respondent name is required")
 		return
 	}
+	if len(req.RespondentName) > 200 || len(req.SlotIDs) > len(survey.Slots) {
+		writeError(w, http.StatusBadRequest, "response exceeds maximum name or slot count")
+		return
+	}
+	seen := map[int64]bool{}
 	for _, id := range req.SlotIDs {
 		if !valid[id] {
 			writeError(w, http.StatusBadRequest, "slot does not belong to survey")
 			return
 		}
+		if seen[id] {
+			writeError(w, http.StatusBadRequest, "duplicate slot selection")
+			return
+		}
+		seen[id] = true
 	}
 	tx, err := s.db.BeginTx(r.Context(), nil)
 	if err != nil {
@@ -342,6 +398,7 @@ func (s *Server) getResults(w http.ResponseWriter, token string, userID int64) {
 	}
 	defer rows.Close()
 	byID := map[int64]*Response{}
+	responseOrder := []int64{}
 	counts := map[int64]int{}
 	respondents := map[int64][]string{}
 	for _, slot := range survey.Slots {
@@ -353,10 +410,12 @@ func (s *Server) getResults(w http.ResponseWriter, token string, userID int64) {
 		var name string
 		var slot sql.NullInt64
 		if err := rows.Scan(&rid, &name, &slot); err != nil {
-			continue
+			writeError(w, http.StatusInternalServerError, "could not read results")
+			return
 		}
 		if byID[rid] == nil {
 			byID[rid] = &Response{ID: rid, RespondentName: name}
+			responseOrder = append(responseOrder, rid)
 		}
 		if slot.Valid {
 			byID[rid].SlotIDs = append(byID[rid].SlotIDs, slot.Int64)
@@ -364,9 +423,13 @@ func (s *Server) getResults(w http.ResponseWriter, token string, userID int64) {
 			respondents[slot.Int64] = append(respondents[slot.Int64], name)
 		}
 	}
+	if err := rows.Err(); err != nil {
+		writeError(w, http.StatusInternalServerError, "could not load results")
+		return
+	}
 	responses := make([]Response, 0, len(byID))
-	for _, response := range byID {
-		responses = append(responses, *response)
+	for _, id := range responseOrder {
+		responses = append(responses, *byID[id])
 	}
 	writeJSON(w, http.StatusOK, SurveyResults{Survey: survey, Responses: responses, SlotCounts: counts, Respondents: respondents})
 }
@@ -394,8 +457,15 @@ func (s *Server) loadSlots(surveyID int64) ([]TimeSlot, error) {
 		if err := rows.Scan(&slot.ID, &start, &end); err != nil {
 			return nil, err
 		}
-		slot.Start, _ = time.Parse(time.RFC3339Nano, start)
-		slot.End, _ = time.Parse(time.RFC3339Nano, end)
+		var err error
+		slot.Start, err = time.Parse(time.RFC3339Nano, start)
+		if err != nil {
+			return nil, err
+		}
+		slot.End, err = time.Parse(time.RFC3339Nano, end)
+		if err != nil {
+			return nil, err
+		}
 		slot.Survey = surveyID
 		slots = append(slots, slot)
 	}
@@ -427,7 +497,7 @@ func (s *Server) setSession(w http.ResponseWriter, userID int64) {
 	token := uuid.NewString()
 	expires := time.Now().UTC().Add(30 * 24 * time.Hour)
 	_, _ = s.db.Exec(`INSERT INTO sessions(token,user_id,expires_at) VALUES(?,?,?)`, token, userID, expires.Format(time.RFC3339Nano))
-	http.SetCookie(w, &http.Cookie{Name: sessionCookieName, Value: token, Path: "/", Expires: expires, HttpOnly: true, SameSite: http.SameSiteLaxMode})
+	http.SetCookie(w, &http.Cookie{Name: sessionCookieName, Value: token, Path: "/", Expires: expires, HttpOnly: true, Secure: s.secureCookies, SameSite: http.SameSiteLaxMode})
 }
 
 func (s *Server) requireMethod(method string, h http.HandlerFunc) http.HandlerFunc {
@@ -443,7 +513,7 @@ func (s *Server) requireMethod(method string, h http.HandlerFunc) http.HandlerFu
 func (s *Server) withCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
-		if origin != "" {
+		if origin != "" && s.allowedOrigins[origin] {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Vary", "Origin")
 			w.Header().Set("Access-Control-Allow-Credentials", "true")
@@ -454,8 +524,30 @@ func (s *Server) withCORS(next http.Handler) http.Handler {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
+		if origin != "" && !s.allowedOrigins[origin] && r.Method != http.MethodGet && r.Method != http.MethodHead {
+			writeError(w, http.StatusForbidden, "origin not allowed")
+			return
+		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func publicSurvey(survey Survey) PublicSurvey {
+	return PublicSurvey{ID: survey.ID, Title: survey.Title, Description: survey.Description, Timezone: survey.Timezone, ShareToken: survey.ShareToken, Slots: survey.Slots}
+}
+
+func loadAllowedOrigins() map[string]bool {
+	origins := map[string]bool{
+		"http://localhost:5173": true,
+		"http://127.0.0.1:5173": true,
+	}
+	for _, origin := range strings.Split(os.Getenv("ALLOWED_ORIGINS"), ",") {
+		origin = strings.TrimSpace(origin)
+		if origin != "" {
+			origins[origin] = true
+		}
+	}
+	return origins
 }
 
 func decode(w http.ResponseWriter, r *http.Request, target any) bool {
@@ -463,6 +555,11 @@ func decode(w http.ResponseWriter, r *http.Request, target any) bool {
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid json: %v", err))
+		return false
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		writeError(w, http.StatusBadRequest, "invalid json: multiple JSON values")
 		return false
 	}
 	return true

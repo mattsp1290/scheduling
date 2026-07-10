@@ -35,6 +35,13 @@ make dev-web
 
 The web app expects `VITE_API_BASE` to point at the API origin. In local development it defaults to `http://localhost:8080`.
 
+Useful API environment variables:
+
+- `ADDR` — listen address, default `:8080`
+- `DATABASE_PATH` — SQLite file path, default `scheduling.db`
+- `ALLOWED_ORIGINS` — comma-separated extra browser origins allowed for credentialed CORS; localhost Svelte dev origins are allowed by default
+- `COOKIE_SECURE=true` — mark session cookies as Secure for HTTPS deployments
+
 ## Verification
 
 ```bash
