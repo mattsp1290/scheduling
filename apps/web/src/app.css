@@ -1,0 +1,65 @@
+:root {
+	font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+	color: #1d2433;
+	background: #f6f7fb;
+}
+
+body { margin: 0; }
+a { color: #3457d5; text-decoration: none; }
+button, .button {
+	border: 0;
+	border-radius: 10px;
+	background: #3457d5;
+	color: white;
+	font-weight: 700;
+	padding: 0.7rem 1rem;
+	cursor: pointer;
+	display: inline-block;
+}
+button.secondary { background: #e7eaf8; color: #25315f; }
+button.danger { background: #e5484d; }
+button.link { background: transparent; color: #3457d5; padding: 0; }
+input, textarea, select {
+	border: 1px solid #ced4e0;
+	border-radius: 10px;
+	font: inherit;
+	padding: 0.75rem;
+	width: 100%;
+	box-sizing: border-box;
+}
+textarea { min-height: 90px; }
+label { display: grid; gap: 0.35rem; font-weight: 700; }
+.topbar {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	padding: 1rem 2rem;
+	background: white;
+	box-shadow: 0 1px 10px #dbe0ec;
+}
+.brand { color: #1d2433; font-size: 1.3rem; font-weight: 900; }
+.topbar nav { display: flex; align-items: center; gap: 1rem; }
+.shell { max-width: 1100px; margin: 0 auto; padding: 2rem; }
+.card {
+	background: white;
+	border-radius: 18px;
+	box-shadow: 0 12px 36px #dbe0ec;
+	padding: 1.5rem;
+}
+.grid { display: grid; gap: 1rem; }
+.two { grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+.error { background: #fff0f0; color: #b42318; border-radius: 10px; padding: 0.8rem; }
+.success { background: #ecfdf3; color: #047857; border-radius: 10px; padding: 0.8rem; }
+.hero { display: grid; gap: 1rem; padding: 4rem 0; max-width: 760px; }
+.hero h1 { font-size: clamp(2.2rem, 7vw, 5rem); margin: 0; line-height: 0.95; }
+.survey-list { display: grid; gap: 1rem; }
+.slot-list { display: flex; flex-wrap: wrap; gap: 0.5rem; padding: 0; list-style: none; }
+.slot-pill { background: #eef2ff; border-radius: 999px; padding: 0.55rem 0.8rem; }
+.calendar { display: grid; gap: 0.9rem; }
+.day-tabs { display: flex; gap: 0.5rem; overflow-x: auto; padding-bottom: 0.25rem; }
+.day-tabs button { background: #e7eaf8; color: #25315f; min-width: 92px; }
+.day-tabs button.active { background: #3457d5; color: white; }
+.hour-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 0.5rem; }
+.hour-grid button { background: #f3f5fb; color: #1d2433; border: 1px solid #d7ddeb; }
+.hour-grid button.selected { background: #16a34a; color: white; border-color: #16a34a; }
+.result-row { display: grid; grid-template-columns: 1fr auto; gap: 1rem; align-items: center; padding: 0.8rem 0; border-bottom: 1px solid #edf0f7; }
