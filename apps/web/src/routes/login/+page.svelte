@@ -21,7 +21,7 @@
 		{#if error}<div class="error">{error}</div>{/if}
 		<label>Email <input bind:value={email} type="email" autocomplete="email" /></label>
 		<label>Password <input bind:value={password} type="password" autocomplete="current-password" /></label>
-		<button on:click={login}>Log in</button>
+		<button onclick={login}>Log in</button>
 		<p>Need an account? <a href="/signup">Sign up</a>.</p>
 	</div>
 </div>

@@ -30,6 +30,8 @@ apps/api/api
 apps/web/node_modules/
 apps/web/.svelte-kit/
 apps/web/build/
+apps/web/playwright-report/
+apps/web/test-results/
 apps/web/.env
 
 # Editor/IDE

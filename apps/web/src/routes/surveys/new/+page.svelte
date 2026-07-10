@@ -40,5 +40,5 @@
 	<label>Description <textarea bind:value={description} placeholder="Choose every slot that works for you."></textarea></label>
 	<h2>Candidate time slots</h2>
 	<CalendarSlotPicker bind:slots />
-	<button on:click={createSurvey}>Create share link</button>
+	<button onclick={createSurvey}>Create share link</button>
 </div>

@@ -48,3 +48,10 @@ Useful API environment variables:
 make test
 make build
 ```
+
+Run the browser integration flow in Docker with Playwright:
+
+```bash
+make e2e
+make e2e-clean # optional cleanup of compose volumes
+```

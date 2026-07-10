@@ -1,0 +1,54 @@
+services:
+  api:
+    image: golang:1.26
+    working_dir: /workspace/apps/api
+    volumes:
+      - .:/workspace
+      - go-mod-cache:/go/pkg/mod
+    environment:
+      ADDR: :8080
+      DATABASE_PATH: /tmp/scheduling-e2e.db
+      ALLOWED_ORIGINS: http://web:5173
+    command: sh -c "rm -f /tmp/scheduling-e2e.db && go run ./cmd/api"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/api/health >/dev/null"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  web:
+    image: node:22-bookworm
+    working_dir: /workspace/apps/web
+    volumes:
+      - .:/workspace
+      - web-node-modules:/workspace/apps/web/node_modules
+    environment:
+      VITE_API_BASE: ""
+      VITE_API_PROXY: http://api:8080
+    command: sh -c "npm ci && npm run dev -- --host 0.0.0.0"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:5173').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  e2e:
+    image: mcr.microsoft.com/playwright:v1.57.0-noble
+    working_dir: /workspace/apps/web
+    volumes:
+      - .:/workspace
+      - e2e-node-modules:/workspace/apps/web/node_modules
+    environment:
+      PLAYWRIGHT_BASE_URL: http://web:5173
+    command: sh -c "npm ci && npx playwright test"
+    depends_on:
+      web:
+        condition: service_healthy
+
+volumes:
+  go-mod-cache:
+  web-node-modules:
+  e2e-node-modules:

@@ -23,7 +23,7 @@
 		<label>Name <input bind:value={name} autocomplete="name" /></label>
 		<label>Email <input bind:value={email} type="email" autocomplete="email" /></label>
 		<label>Password <input bind:value={password} type="password" autocomplete="new-password" /></label>
-		<button on:click={signup}>Sign up</button>
+		<button onclick={signup}>Sign up</button>
 		<p>Already have an account? <a href="/login">Log in</a>.</p>
 	</div>
 </div>

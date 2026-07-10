@@ -31,7 +31,7 @@
 		{:else if user}
 			<a href="/surveys/new">New survey</a>
 			<span>{user.name}</span>
-			<button class="link" on:click={logout}>Logout</button>
+			<button class="link" onclick={logout}>Logout</button>
 		{:else}
 			<a href="/login">Login</a>
 			<a class="button" href="/signup">Sign up</a>

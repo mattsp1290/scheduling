@@ -50,12 +50,12 @@
 			<label>Your name <input bind:value={respondent_name} /></label>
 			<div class="grid">
 				{#each survey.slots as slot}
-					<button type="button" class:selected={selected.has(slot.id)} class="secondary" on:click={() => toggle(slot.id)}>
+					<button type="button" class:selected={selected.has(slot.id)} class="secondary" onclick={() => toggle(slot.id)}>
 						{selected.has(slot.id) ? '✓ ' : ''}{formatSlot(slot)}
 					</button>
 				{/each}
 			</div>
-			<button on:click={submit}>Submit availability</button>
+			<button onclick={submit}>Submit availability</button>
 		{/if}
 	</div>
 {/if}
