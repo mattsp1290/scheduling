@@ -113,6 +113,7 @@ func TestHealthOnlyAllowsGet(t *testing.T) {
 	if getRecorder.Code != http.StatusOK {
 		t.Fatalf("GET health status = %d", getRecorder.Code)
 	}
+	assert.Equal(t, "no-store", getRecorder.Header().Get("Cache-Control"))
 	var health map[string]string
 	if err := json.NewDecoder(getRecorder.Body).Decode(&health); err != nil {
 		t.Fatal(err)
