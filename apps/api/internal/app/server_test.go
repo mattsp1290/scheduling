@@ -124,6 +124,9 @@ func TestHealthOnlyAllowsGet(t *testing.T) {
 	if postRecorder.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("POST health status = %d", postRecorder.Code)
 	}
+	if allow := postRecorder.Header().Get("Allow"); allow != http.MethodGet {
+		t.Fatalf("POST health Allow = %q", allow)
+	}
 }
 
 func TestCORSOnlyAllowsConfiguredOrigins(t *testing.T) {

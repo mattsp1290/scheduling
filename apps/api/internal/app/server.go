@@ -503,6 +503,7 @@ func (s *Server) setSession(w http.ResponseWriter, userID int64) {
 func (s *Server) requireMethod(method string, h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != method {
+			w.Header().Set("Allow", method)
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
