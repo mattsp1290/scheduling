@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestSignupLoginCreateSurveyAndRespondFlow(t *testing.T) {
@@ -115,9 +117,7 @@ func TestHealthOnlyAllowsGet(t *testing.T) {
 	if err := json.NewDecoder(getRecorder.Body).Decode(&health); err != nil {
 		t.Fatal(err)
 	}
-	if health["status"] != "ok" {
-		t.Fatalf("GET health body = %#v", health)
-	}
+	assert.Equal(t, "ok", health["status"])
 
 	postRecorder := httptest.NewRecorder()
 	server.Routes().ServeHTTP(postRecorder, httptest.NewRequest(http.MethodPost, "/api/health", nil))
