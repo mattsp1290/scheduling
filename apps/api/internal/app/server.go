@@ -86,7 +86,7 @@ func (s *Server) Close() error { return s.db.Close() }
 
 func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/health", s.handleHealth)
+	mux.HandleFunc("/api/health", s.requireMethod(http.MethodGet, s.handleHealth))
 	mux.HandleFunc("/api/auth/signup", s.requireMethod(http.MethodPost, s.handleSignup))
 	mux.HandleFunc("/api/auth/login", s.requireMethod(http.MethodPost, s.handleLogin))
 	mux.HandleFunc("/api/auth/logout", s.requireMethod(http.MethodPost, s.handleLogout))
@@ -503,6 +503,7 @@ func (s *Server) setSession(w http.ResponseWriter, userID int64) {
 func (s *Server) requireMethod(method string, h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != method {
+			w.Header().Set("Allow", method)
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}

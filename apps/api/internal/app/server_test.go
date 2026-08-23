@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestSignupLoginCreateSurveyAndRespondFlow(t *testing.T) {
@@ -96,6 +98,34 @@ func TestDuplicateSlotSelectionsAreRejected(t *testing.T) {
 	}, nil)
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("duplicate response status = %d", resp.StatusCode)
+	}
+}
+
+func TestHealthOnlyAllowsGet(t *testing.T) {
+	server, err := NewServer(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+
+	getRecorder := httptest.NewRecorder()
+	server.Routes().ServeHTTP(getRecorder, httptest.NewRequest(http.MethodGet, "/api/health", nil))
+	if getRecorder.Code != http.StatusOK {
+		t.Fatalf("GET health status = %d", getRecorder.Code)
+	}
+	var health map[string]string
+	if err := json.NewDecoder(getRecorder.Body).Decode(&health); err != nil {
+		t.Fatal(err)
+	}
+	assert.Equal(t, "ok", health["status"])
+
+	postRecorder := httptest.NewRecorder()
+	server.Routes().ServeHTTP(postRecorder, httptest.NewRequest(http.MethodPost, "/api/health", nil))
+	if postRecorder.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("POST health status = %d", postRecorder.Code)
+	}
+	if allow := postRecorder.Header().Get("Allow"); allow != http.MethodGet {
+		t.Fatalf("POST health Allow = %q", allow)
 	}
 }
 
