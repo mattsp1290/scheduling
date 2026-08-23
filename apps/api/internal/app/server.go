@@ -86,7 +86,7 @@ func (s *Server) Close() error { return s.db.Close() }
 
 func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/health", s.handleHealth)
+	mux.HandleFunc("/api/health", s.requireMethod(http.MethodGet, s.handleHealth))
 	mux.HandleFunc("/api/auth/signup", s.requireMethod(http.MethodPost, s.handleSignup))
 	mux.HandleFunc("/api/auth/login", s.requireMethod(http.MethodPost, s.handleLogin))
 	mux.HandleFunc("/api/auth/logout", s.requireMethod(http.MethodPost, s.handleLogout))
